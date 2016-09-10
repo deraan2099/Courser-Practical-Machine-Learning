@@ -1,0 +1,167 @@
+---
+title: "Practical Machine Learning project"
+author: "af"
+date: "8 September 2016"
+output: html_document
+---
+# Practical Machine Learning Course Project: FitBit type of exercise prediction model
+
+This course project aims to find a good prediction algorithm to classify the type of exercise performed by the users of a FitBit device. We dowloaded two dataset:
+1. The fitbit dataset which contains all the observation from different sensors plu the variable "classe", which identifyes the value that we want to predict. We will split this dataset to train and test different models.
+2. The quiz test dataset, which we are going to use to predict some values of the variable classe to answer the final quiz questions.
+Please refer to the Coursera page for the source of the data.
+
+## Pre processing
+Load the needed libraries:
+```{r}
+library(knitr)
+library(randomForest)
+library(rattle)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(plyr)
+```
+
+Download and load the data:
+
+```{r}
+urlTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urlTest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+trainFile <- "./Desktop/training.csv"
+testFile  <- "./Desktop/testing.csv"
+if (!file.exists("./Desktop")) {
+  dir.create("./Desktop")
+}
+if (!file.exists(trainFile)) {
+  download.file(urlTrain, destfile=trainFile, method="curl")
+}
+if (!file.exists(testFile)) {
+  download.file(urlTest, destfile=testFile, method="curl")
+}
+```
+
+```{r}
+fitbit_dataset <- read.csv("./Desktop/training.csv")
+quiz_test <- read.csv("./Desktop/testing.csv")
+dim(fitbit_dataset)
+dim(quiz_test)
+```
+
+The first thing to do is to split the dataset into training and test set:
+
+```{r}
+idxTrain <- createDataPartition(y=fitbit_dataset$classe, p=0.7, list=FALSE)
+train_v0 <- fitbit_dataset[idxTrain, ] 
+test_v0 <- fitbit_dataset[-idxTrain, ]
+```
+
+Remove zero variance variables to remove those variables that have little influence on the outcome. We calculate this only on the training set but apply it on both the sets:
+
+```{r}
+nzvs <- nearZeroVar(train_v0, saveMetrics=TRUE)
+train_v1 <- train_v0[,nzvs$nzv==FALSE]
+test_v1 <- test_v0[,nzvs$nzv==FALSE]
+```
+
+Remove the first column because it is not needed and, we remove the columns the columns with NAs. 
+
+```{r}
+train_v1 <- train_v1[c(-1)]
+test_v1 <- test_v1[c(-1)]
+train_v2 <- train_v1[, colSums(is.na(train_v1)) == 0] 
+test_v2 <- test_v1[, colSums(is.na(train_v1)) == 0] 
+dim(train_v2)
+dim(test_v2)
+```
+
+Thus, we have wiped out more than 50% of the variables (from 160 to 58). We can now proceed with the data modelling.
+
+## Modelling the data
+
+Let's try with the three main methods we have seen in this course:
+1. Decision trees
+2. Random forests
+3. Gradient Boosting Machine
+
+### Decision trees
+We use the rpart package with method "class" (that is classification).
+```{r}
+set.seed(123)
+modelDT <- rpart(classe ~., data = train_v2, method = "class")
+fancyRpartPlot(modelDT)
+```
+
+Here the prediction performances:
+```{r}
+predictionsDT <- predict(modelDT, test_v2, type = "class")
+cmtree <- confusionMatrix(predictionsDT, test_v2$classe)
+cmtree
+```
+
+### Random Forests
+
+```{r}
+set.seed(123)
+modelRF <- randomForest(classe ~.,data = train_v2)
+```
+
+Random forests model has the following prediction performance:
+```{r}
+predictionsRF <- predict(modelRF, test_v2, type = "class")
+confusionMatrix(predictionsRF, test_v2$classe)
+plot(modelRF)
+```
+
+### Gradient boosting machine
+```{r}
+set.seed(123)
+control <- trainControl(method = "repeatedcv",number = 5,repeats = 1)
+modelGBM <- train(classe ~ ., data=train_v2, method = "gbm", trControl = control,verbose=FALSE)
+```
+Here the GBM prediction performance:
+```{r}
+predictionsGBM <- predict(modelGBM, newdata=test_v2)
+confusionMatrix(predictionsGBM, test_v2$classe)
+plot(modelGBM, ylim=c(0.9, 1))
+```
+
+### Modelling summary:
+In conclusion, we have the following accuracies for the three different models:
+1. Decision trees: 0.87
+2. Random forests: 0.998
+3. GBM: 0.996
+We can conclude that the best model for this problem is Random Forests.
+
+## Predict results on the Quiz test data
+
+From the predictive performances highlighted in the previous section, we conclude that the Random Forests performs better than both GBM and Decision Trees. Thus, we use that model to predict the "classe" variable on the quiz data set given for this project.
+First we have to remove all the unecessary variables from the quiz set, as we did before for the training set:
+
+```{r}
+namesOk <- colnames(train_v2[,-58]) # We need to remove the "classe" variable because it is not present in the quiz test set
+quiz_test_v1 <- quiz_test[,namesOk]
+```
+
+Because we are loading data from two different sources it can happen that they have a different format or levels, so that the model think that the predictors of the test set are different from those of the train set, giving an error. We can solve this by doing the following:
+
+```{r}
+for (i in 1:length(quiz_test_v1) ) {
+    for(j in 1:length(train_v2)) {
+        if( length( grep(names(train_v2[i]), names(quiz_test_v1)[j]) ) == 1)  {
+            class(quiz_test_v1[j]) <- class(train_v2[i])
+        }      
+    }      
+}
+quiz_test_v2 <- rbind(train_v2[2, -58] , quiz_test_v1)
+quiz_test_v2 <- quiz_test_v2[-1,]
+```
+
+We can now apply the prediction model:
+
+```{r}
+predictionQuiz <- predict(modelRF, quiz_test_v2, type = "class")
+predictionQuiz
+```
